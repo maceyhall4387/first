@@ -503,6 +503,147 @@ async def on_command_error(ctx: commands.Context, error):
         raise error
 
 
+YTDLP_GENERIC = {
+    "noplaylist": True,
+    "quiet": False,
+    "no_warnings": False,
+    "outtmpl": "%(id)s.%(ext)s",
+    "retries": 3,
+    "geo_bypass": True,
+    "no_check_certificate": True,
+    "socket_timeout": 15,
+    **_IMPERSONATE_OPTS,
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "*/*",
+    },
+    **({"cookiefile": _COOKIEFILE} if _COOKIEFILE else {}),
+}
+
+
+def download_generic_sync(url: str, tmpdir: Path, prefer_video: bool) -> dict:
+    opts = YTDLP_GENERIC.copy()
+    opts["outtmpl"] = str(tmpdir / "%(id)s.%(ext)s")
+    if prefer_video:
+        opts["format"] = "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/bestvideo+bestaudio/best"
+        opts["merge_output_format"] = "mp4"
+    else:
+        opts["format"] = "bestaudio/best"
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return info["entries"][0] if "entries" in info else info
+
+
+@bot.command(name="mp4")
+async def mp4(ctx, *, url: str):
+    """Download a video (Instagram, Twitter/X, YouTube, etc.) as MP4."""
+    _log(f"[mp4] Invoked by {ctx.author} in #{ctx.channel} — url: {url!r}")
+    msg = await ctx.send("`Downloading video...`")
+    tmpdir = Path(tempfile.mkdtemp())
+    try:
+        await msg.edit(content="`Fetching best quality...`")
+        info = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: download_generic_sync(url, tmpdir, True)
+        )
+        video_id = info.get("id", "video")
+        ext = info.get("ext", "mp4")
+        src = tmpdir / f"{video_id}.{ext}"
+
+        if not src.exists():
+            candidates = list(tmpdir.iterdir())
+            src = candidates[0] if candidates else None
+
+        if not src or not src.exists():
+            await msg.edit(content="`Download failed: file not found.`")
+            return
+
+        tmp_out = tmpdir / f"{video_id}_tmp.mp4"
+        _log(f"[mp4] Remuxing {src.name} → {tmp_out.name}")
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: run_ffmpeg_extract(src, tmp_out, False)
+        )
+        out_path = tmpdir / f"{video_id}.mp4"
+        tmp_out.rename(out_path)
+
+        size_mb = out_path.stat().st_size / (1024 * 1024)
+        _log(f"[mp4] Uploading {out_path.name} ({size_mb:.1f} MB)")
+        if size_mb > 25:
+            await msg.edit(content=f"`File is {size_mb:.1f} MB — too large for Discord (25 MB limit).`")
+            return
+
+        await msg.edit(content="`Uploading...`")
+        await send_file_and_cleanup(ctx, out_path, ctx.author.mention, "`Here is your MP4:`")
+        await msg.edit(content="`Done.`")
+        _log("[mp4] Complete")
+    except Exception as e:
+        _log(f"[mp4] ERROR: {e}")
+        await msg.edit(content=f"`Error: {_short_error(e)}`")
+    finally:
+        try:
+            for f in tmpdir.iterdir():
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+            tmpdir.rmdir()
+        except Exception:
+            pass
+
+
+@bot.command(name="mp3")
+async def mp3(ctx, *, url: str):
+    """Download audio from a video (Instagram, Twitter/X, YouTube, etc.) as MP3."""
+    _log(f"[mp3] Invoked by {ctx.author} in #{ctx.channel} — url: {url!r}")
+    msg = await ctx.send("`Downloading audio...`")
+    tmpdir = Path(tempfile.mkdtemp())
+    try:
+        info = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: download_generic_sync(url, tmpdir, False)
+        )
+        video_id = info.get("id", "audio")
+        ext = info.get("ext", "m4a")
+        src = tmpdir / f"{video_id}.{ext}"
+
+        if not src.exists():
+            candidates = list(tmpdir.iterdir())
+            src = candidates[0] if candidates else None
+
+        if not src or not src.exists():
+            await msg.edit(content="`Download failed: file not found.`")
+            return
+
+        out_path = tmpdir / f"{video_id}.mp3"
+        _log(f"[mp3] Converting {src.name} → {out_path.name}")
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: run_ffmpeg_extract(src, out_path, True)
+        )
+
+        size_mb = out_path.stat().st_size / (1024 * 1024)
+        _log(f"[mp3] Uploading {out_path.name} ({size_mb:.1f} MB)")
+        if size_mb > 25:
+            await msg.edit(content=f"`File is {size_mb:.1f} MB — too large for Discord (25 MB limit).`")
+            return
+
+        await msg.edit(content="`Uploading...`")
+        await send_file_and_cleanup(ctx, out_path, ctx.author.mention, "`Here is your MP3:`")
+        await msg.edit(content="`Done.`")
+        _log("[mp3] Complete")
+    except Exception as e:
+        _log(f"[mp3] ERROR: {e}")
+        await msg.edit(content=f"`Error: {_short_error(e)}`")
+    finally:
+        try:
+            for f in tmpdir.iterdir():
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+            tmpdir.rmdir()
+        except Exception:
+            pass
+
+
 _utils_mod.setup(bot)
 _monitoring_mod.setup(bot)
 _calc_mod.setup(bot)
@@ -511,6 +652,8 @@ bot.help_command = EmbedHelpCommand()
 
 bot.get_command("ytmp3").category = "YouTube"
 bot.get_command("ytmp4").category = "YouTube"
+bot.get_command("mp4").category = "Downloader"
+bot.get_command("mp3").category = "Downloader"
 bot.get_command("stats").category = "Monitoring"
 bot.get_command("uptime").category = "Monitoring"
 bot.get_command("ping").category = "Utilities"
