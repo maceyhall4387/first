@@ -32,6 +32,7 @@ _COOKIEFILE = os.environ.get("YTDL_COOKIEFILE")
 try:
     from yt_dlp.networking.impersonate import ImpersonateTarget
     import curl_cffi  # noqa: F401
+
     _IMPERSONATE_OPTS = {"impersonate": ImpersonateTarget(client="chrome")}
 except ImportError:
     _IMPERSONATE_OPTS = {}
@@ -104,14 +105,60 @@ def _is_ytdlp_fatal(exc: Exception) -> bool:
     return any(phrase in msg for phrase in _YTDLP_FATAL_PHRASES)
 
 
+def _bar(pct: int, width: int = 12) -> str:
+    filled = round(pct / 100 * width)
+    return "▰" * filled + "░" * (width - filled)
+
+
+def _sm(pct: int, *lines: str) -> str:
+    return f"`[{_bar(pct)}]` **{pct}%**\n" + "\n".join(lines)
+
+
+def _platform(url: str) -> str:
+    u = url.lower()
+    if "instagram.com" in u: return "Instagram"
+    if "twitter.com" in u or "x.com" in u: return "Twitter/X"
+    if "youtube.com" in u or "youtu.be" in u: return "YouTube"
+    if "tiktok.com" in u: return "TikTok"
+    if "reddit.com" in u: return "Reddit"
+    if "twitch.tv" in u: return "Twitch"
+    if "vimeo.com" in u: return "Vimeo"
+    if "facebook.com" in u or "fb.watch" in u: return "Facebook"
+    if "soundcloud.com" in u: return "SoundCloud"
+    if "bilibili.com" in u: return "Bilibili"
+    if "dailymotion.com" in u: return "Dailymotion"
+    return "Media"
+
+
+async def _send_result(ctx, msg, file_path: Path, media_type: str, title: str, start: float) -> bool:
+    size_mb = file_path.stat().st_size / (1024 * 1024)
+    if size_mb > 25:
+        await msg.edit(content=_sm(0, f"❌  File too large ({size_mb:.1f} MB — Discord limit is 25 MB)"))
+        return False
+    await msg.edit(content=_sm(90, "📤  Uploading..."))
+    title_line = f"\n**{title}**" if title else ""
+    try:
+        await ctx.send(
+            f"{ctx.author.mention}, here is your {media_type}:{title_line}",
+            file=discord.File(str(file_path))
+        )
+    except discord.errors.HTTPException as e:
+        await msg.edit(content=_sm(0, f"❌  Upload failed: {e}"))
+        return False
+    finally:
+        file_path.unlink(missing_ok=True)
+    total = time.time() - start
+    await msg.edit(content=_sm(100, f"✅  Done in {total:.1f}s"))
+    return True
+
+
 def run_ffmpeg_extract(input_path: Path, output_path: Path, to_mp3: bool):
     """Convert/remux a downloaded file. Raises with stderr on failure."""
     try:
         if to_mp3:
             out, err = (
                 ffmpeg.input(str(input_path))
-                .audio
-                .output(str(output_path), acodec="libmp3lame", ab="128k")
+                .audio.output(str(output_path), acodec="libmp3lame", ab="128k")
                 .overwrite_output()
                 .run(capture_stdout=True, capture_stderr=True)
             )
@@ -213,6 +260,7 @@ def _is_valid_mp4(path: Path) -> bool:
 
 def _curl_download_sync(url: str, dest_str: str) -> tuple[str, bytes]:
     from curl_cffi.requests import Session
+
     with Session(impersonate="chrome") as s:
         r = s.get(url, headers=_INV_HEADERS, allow_redirects=True, stream=True)
         ct = r.headers.get("Content-Type", "")
@@ -251,14 +299,18 @@ async def _try_download_url(url: str, dest: Path, label: str) -> bool:
         try:
             dl_timeout = aiohttp.ClientTimeout(total=600, connect=15)
             async with aiohttp.ClientSession(timeout=dl_timeout) as sess:
-                async with sess.get(url, headers=_INV_HEADERS, allow_redirects=True) as r:
+                async with sess.get(
+                    url, headers=_INV_HEADERS, allow_redirects=True
+                ) as r:
                     if r.status != 200:
                         _log(f"[Invidious] {label} → HTTP {r.status}")
                         return False
                     ct = r.headers.get("Content-Type", "")
                     if "text/html" in ct or "text/plain" in ct:
                         snippet = await r.read()
-                        _log(f"[Invidious] {label} → non-video ({ct}): {snippet[:120]!r}")
+                        _log(
+                            f"[Invidious] {label} → non-video ({ct}): {snippet[:120]!r}"
+                        )
                         return False
                     async with aiofiles.open(dest, "wb") as f:
                         async for chunk in r.content.iter_chunked(256 * 1024):
@@ -348,7 +400,9 @@ async def _download_via_invidious(query: str, tmpdir: Path, prefer_video: bool) 
     raise Exception("All Invidious streams and instance proxies exhausted")
 
 
-async def download(query: str, tmpdir: Path, prefer_video: bool, on_status=None) -> dict:
+async def download(
+    query: str, tmpdir: Path, prefer_video: bool, on_status=None
+) -> dict:
     """
     Download with 2-stage fallback chain:
       1. yt-dlp direct  (impersonation + multi-client, then plain fallback)
@@ -370,7 +424,9 @@ async def download(query: str, tmpdir: Path, prefer_video: bool, on_status=None)
     _log("[Stage 1] yt-dlp direct")
     await _status("`Downloading...`")
     try:
-        result = await loop.run_in_executor(None, lambda: download_sync(query, tmpdir, prefer_video))
+        result = await loop.run_in_executor(
+            None, lambda: download_sync(query, tmpdir, prefer_video)
+        )
         _log("[Stage 1] SUCCESS")
         return result
     except Exception as e:
@@ -392,7 +448,9 @@ async def download(query: str, tmpdir: Path, prefer_video: bool, on_status=None)
         _log(f"[Stage 2] FAILED: {type(e).__name__}: {e}")
         await _status(f"`All methods failed: {_short_error(e)}`")
 
-    _log(f"[download] All stages exhausted. Final error: {type(last_error).__name__}: {last_error}")
+    _log(
+        f"[download] All stages exhausted. Final error: {type(last_error).__name__}: {last_error}"
+    )
     raise last_error
 
 
@@ -400,34 +458,63 @@ async def download(query: str, tmpdir: Path, prefer_video: bool, on_status=None)
 async def ytmp3(ctx, *, query: str):
     """Download a YouTube Video in MP3."""
     _log(f"[ytmp3] Invoked by {ctx.author} in #{ctx.channel} — query: {query!r}")
-    msg = await ctx.send("`Converting to MP3...`")
+    start = time.time()
+    msg = await ctx.send(_sm(5, "⬇  Downloading YouTube Audio  ·  yt-dlp"))
     tmpdir = Path(tempfile.mkdtemp())
     try:
-        info = await download(query, tmpdir, False, lambda s: msg.edit(content=s))
-        if not info:
-            await msg.edit(content="`Download failed.`")
-            return
-        downloaded = tmpdir / f"{info['id']}.{info.get('ext', 'm4a')}"
-        out_path = tmpdir / f"{info['id']}.mp3"
-        _log(f"[ytmp3] Running ffmpeg conversion: {downloaded.name} → {out_path.name}")
+        info = None
+        stage1_err = ""
+        try:
+            info = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: download_sync(query, tmpdir, False)
+            )
+        except Exception as e:
+            if _is_ytdlp_fatal(e):
+                await msg.edit(content=_sm(0,
+                    f"❌  yt-dlp: {_short_error(e)}",
+                    f"   · {time.time()-start:.1f}s"
+                ))
+                return
+            stage1_err = _short_error(e)
+            _log(f"[ytmp3] Stage 1 failed: {e}")
+
+        if info is None:
+            await msg.edit(content=_sm(35,
+                f"⚠  yt-dlp failed: {stage1_err}",
+                "↩  Trying Invidious fallback..."
+            ))
+            try:
+                info = await _download_via_invidious(query, tmpdir, False)
+            except Exception as e:
+                await msg.edit(content=_sm(0,
+                    f"⚠  yt-dlp: {stage1_err}",
+                    f"❌  Invidious: {_short_error(e)}",
+                    f"   · {time.time()-start:.1f}s"
+                ))
+                return
+
+        elapsed_dl = time.time() - start
+        title = info.get("title", "") or ""
+        video_id = info["id"]
+        downloaded = tmpdir / f"{video_id}.{info.get('ext', 'm4a')}"
+        out_path = tmpdir / f"{video_id}.mp3"
+
+        await msg.edit(content=_sm(65,
+            f"✅  Downloaded  · {elapsed_dl:.1f}s",
+            "🔄  Converting to MP3..."
+        ))
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: run_ffmpeg_extract(downloaded, out_path, True)
         )
-        _log(f"[ytmp3] Uploading {out_path.name} ({out_path.stat().st_size // 1024} KB)")
-        await msg.edit(content="`Uploading MP3...`")
-        await send_file_and_cleanup(ctx, out_path, ctx.author.mention, "`Here is the converted MP3:`")
-        await msg.edit(content="`Done.`")
-        _log("[ytmp3] Complete")
+        await _send_result(ctx, msg, out_path, "MP3", title, start)
+
     except Exception as e:
         _log(f"[ytmp3] ERROR: {e}")
-        await msg.edit(content=f"`Error: {_short_error(e)}`")
+        await msg.edit(content=_sm(0, f"❌  Error: {_short_error(e)}"))
     finally:
         try:
             for f in tmpdir.iterdir():
-                try:
-                    f.unlink()
-                except Exception:
-                    pass
+                f.unlink(missing_ok=True)
             tmpdir.rmdir()
         except Exception:
             pass
@@ -437,34 +524,65 @@ async def ytmp3(ctx, *, query: str):
 async def ytmp4(ctx, *, query: str):
     """Download a YouTube Video in MP4."""
     _log(f"[ytmp4] Invoked by {ctx.author} in #{ctx.channel} — query: {query!r}")
-    msg = await ctx.send("`Converting to MP4...`")
+    start = time.time()
+    msg = await ctx.send(_sm(5, "⬇  Downloading YouTube Video  ·  yt-dlp"))
     tmpdir = Path(tempfile.mkdtemp())
     try:
-        info = await download(query, tmpdir, True, lambda s: msg.edit(content=s))
-        if not info:
-            await msg.edit(content="`Download failed.`")
-            return
-        downloaded = tmpdir / f"{info['id']}.{info.get('ext', 'mp4')}"
-        out_path = tmpdir / f"{info['id']}.mp4"
-        _log(f"[ytmp4] Running ffmpeg remux: {downloaded.name} → {out_path.name}")
+        info = None
+        stage1_err = ""
+        try:
+            info = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: download_sync(query, tmpdir, True)
+            )
+        except Exception as e:
+            if _is_ytdlp_fatal(e):
+                await msg.edit(content=_sm(0,
+                    f"❌  yt-dlp: {_short_error(e)}",
+                    f"   · {time.time()-start:.1f}s"
+                ))
+                return
+            stage1_err = _short_error(e)
+            _log(f"[ytmp4] Stage 1 failed: {e}")
+
+        if info is None:
+            await msg.edit(content=_sm(35,
+                f"⚠  yt-dlp failed: {stage1_err}",
+                "↩  Trying Invidious fallback..."
+            ))
+            try:
+                info = await _download_via_invidious(query, tmpdir, True)
+            except Exception as e:
+                await msg.edit(content=_sm(0,
+                    f"⚠  yt-dlp: {stage1_err}",
+                    f"❌  Invidious: {_short_error(e)}",
+                    f"   · {time.time()-start:.1f}s"
+                ))
+                return
+
+        elapsed_dl = time.time() - start
+        title = info.get("title", "") or ""
+        video_id = info["id"]
+        downloaded = tmpdir / f"{video_id}.{info.get('ext', 'mp4')}"
+        tmp_out = tmpdir / f"{video_id}_tmp.mp4"
+        out_path = tmpdir / f"{video_id}.mp4"
+
+        await msg.edit(content=_sm(65,
+            f"✅  Downloaded  · {elapsed_dl:.1f}s",
+            "🔄  Remuxing to MP4..."
+        ))
         await asyncio.get_event_loop().run_in_executor(
-            None, lambda: run_ffmpeg_extract(downloaded, out_path, False)
+            None, lambda: run_ffmpeg_extract(downloaded, tmp_out, False)
         )
-        _log(f"[ytmp4] Uploading {out_path.name} ({out_path.stat().st_size // 1024} KB)")
-        await msg.edit(content="`Uploading MP4...`")
-        await send_file_and_cleanup(ctx, out_path, ctx.author.mention, "`Here is the converted MP4:`")
-        await msg.edit(content="`Done.`")
-        _log("[ytmp4] Complete")
+        tmp_out.rename(out_path)
+        await _send_result(ctx, msg, out_path, "MP4", title, start)
+
     except Exception as e:
         _log(f"[ytmp4] ERROR: {e}")
-        await msg.edit(content=f"`Error: {_short_error(e)}`")
+        await msg.edit(content=_sm(0, f"❌  Error: {_short_error(e)}"))
     finally:
         try:
             for f in tmpdir.iterdir():
-                try:
-                    f.unlink()
-                except Exception:
-                    pass
+                f.unlink(missing_ok=True)
             tmpdir.rmdir()
         except Exception:
             pass
@@ -478,6 +596,7 @@ async def on_ready():
     else:
         print("[startup] curl_cffi NOT available — impersonation DISABLED")
     from modules.monitoring import load_stats_from_pastebin, health_check_loop
+
     await load_stats_from_pastebin()
     bot.loop.create_task(health_check_loop(bot))
 
@@ -526,7 +645,9 @@ def download_generic_sync(url: str, tmpdir: Path, prefer_video: bool) -> dict:
     opts = YTDLP_GENERIC.copy()
     opts["outtmpl"] = str(tmpdir / "%(id)s.%(ext)s")
     if prefer_video:
-        opts["format"] = "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/bestvideo+bestaudio/best"
+        opts["format"] = (
+            "bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/bestvideo+bestaudio/best"
+        )
         opts["merge_output_format"] = "mp4"
     else:
         opts["format"] = "bestaudio/best"
@@ -538,54 +659,46 @@ def download_generic_sync(url: str, tmpdir: Path, prefer_video: bool) -> dict:
 @bot.command(name="mp4")
 async def mp4(ctx, *, url: str):
     """Download a video (Instagram, Twitter/X, YouTube, etc.) as MP4."""
+    plat = _platform(url)
     _log(f"[mp4] Invoked by {ctx.author} in #{ctx.channel} — url: {url!r}")
-    msg = await ctx.send("`Downloading video...`")
+    start = time.time()
+    msg = await ctx.send(_sm(5, f"⬇  Downloading {plat} Video  ·  yt-dlp"))
     tmpdir = Path(tempfile.mkdtemp())
     try:
-        await msg.edit(content="`Fetching best quality...`")
         info = await asyncio.get_event_loop().run_in_executor(
             None, lambda: download_generic_sync(url, tmpdir, True)
         )
+        elapsed_dl = time.time() - start
+        title = info.get("title", "") or ""
         video_id = info.get("id", "video")
         ext = info.get("ext", "mp4")
         src = tmpdir / f"{video_id}.{ext}"
-
         if not src.exists():
             candidates = list(tmpdir.iterdir())
             src = candidates[0] if candidates else None
-
         if not src or not src.exists():
-            await msg.edit(content="`Download failed: file not found.`")
+            await msg.edit(content=_sm(0, "❌  Download failed: file not found"))
             return
 
+        await msg.edit(content=_sm(65,
+            f"✅  Downloaded  · {elapsed_dl:.1f}s",
+            "🔄  Remuxing to MP4..."
+        ))
         tmp_out = tmpdir / f"{video_id}_tmp.mp4"
-        _log(f"[mp4] Remuxing {src.name} → {tmp_out.name}")
+        out_path = tmpdir / f"{video_id}.mp4"
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: run_ffmpeg_extract(src, tmp_out, False)
         )
-        out_path = tmpdir / f"{video_id}.mp4"
         tmp_out.rename(out_path)
+        await _send_result(ctx, msg, out_path, "MP4", title, start)
 
-        size_mb = out_path.stat().st_size / (1024 * 1024)
-        _log(f"[mp4] Uploading {out_path.name} ({size_mb:.1f} MB)")
-        if size_mb > 25:
-            await msg.edit(content=f"`File is {size_mb:.1f} MB — too large for Discord (25 MB limit).`")
-            return
-
-        await msg.edit(content="`Uploading...`")
-        await send_file_and_cleanup(ctx, out_path, ctx.author.mention, "`Here is your MP4:`")
-        await msg.edit(content="`Done.`")
-        _log("[mp4] Complete")
     except Exception as e:
         _log(f"[mp4] ERROR: {e}")
-        await msg.edit(content=f"`Error: {_short_error(e)}`")
+        await msg.edit(content=_sm(0, f"❌  {plat} Video — {_short_error(e)}"))
     finally:
         try:
             for f in tmpdir.iterdir():
-                try:
-                    f.unlink()
-                except Exception:
-                    pass
+                f.unlink(missing_ok=True)
             tmpdir.rmdir()
         except Exception:
             pass
@@ -594,51 +707,44 @@ async def mp4(ctx, *, url: str):
 @bot.command(name="mp3")
 async def mp3(ctx, *, url: str):
     """Download audio from a video (Instagram, Twitter/X, YouTube, etc.) as MP3."""
+    plat = _platform(url)
     _log(f"[mp3] Invoked by {ctx.author} in #{ctx.channel} — url: {url!r}")
-    msg = await ctx.send("`Downloading audio...`")
+    start = time.time()
+    msg = await ctx.send(_sm(5, f"⬇  Downloading {plat} Audio  ·  yt-dlp"))
     tmpdir = Path(tempfile.mkdtemp())
     try:
         info = await asyncio.get_event_loop().run_in_executor(
             None, lambda: download_generic_sync(url, tmpdir, False)
         )
+        elapsed_dl = time.time() - start
+        title = info.get("title", "") or ""
         video_id = info.get("id", "audio")
         ext = info.get("ext", "m4a")
         src = tmpdir / f"{video_id}.{ext}"
-
         if not src.exists():
             candidates = list(tmpdir.iterdir())
             src = candidates[0] if candidates else None
-
         if not src or not src.exists():
-            await msg.edit(content="`Download failed: file not found.`")
+            await msg.edit(content=_sm(0, "❌  Download failed: file not found"))
             return
 
+        await msg.edit(content=_sm(65,
+            f"✅  Downloaded  · {elapsed_dl:.1f}s",
+            "🔄  Converting to MP3..."
+        ))
         out_path = tmpdir / f"{video_id}.mp3"
-        _log(f"[mp3] Converting {src.name} → {out_path.name}")
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: run_ffmpeg_extract(src, out_path, True)
         )
+        await _send_result(ctx, msg, out_path, "MP3", title, start)
 
-        size_mb = out_path.stat().st_size / (1024 * 1024)
-        _log(f"[mp3] Uploading {out_path.name} ({size_mb:.1f} MB)")
-        if size_mb > 25:
-            await msg.edit(content=f"`File is {size_mb:.1f} MB — too large for Discord (25 MB limit).`")
-            return
-
-        await msg.edit(content="`Uploading...`")
-        await send_file_and_cleanup(ctx, out_path, ctx.author.mention, "`Here is your MP3:`")
-        await msg.edit(content="`Done.`")
-        _log("[mp3] Complete")
     except Exception as e:
         _log(f"[mp3] ERROR: {e}")
-        await msg.edit(content=f"`Error: {_short_error(e)}`")
+        await msg.edit(content=_sm(0, f"❌  {plat} Audio — {_short_error(e)}"))
     finally:
         try:
             for f in tmpdir.iterdir():
-                try:
-                    f.unlink()
-                except Exception:
-                    pass
+                f.unlink(missing_ok=True)
             tmpdir.rmdir()
         except Exception:
             pass
@@ -667,5 +773,6 @@ if __name__ == "__main__":
     if not TOKEN:
         print("WARNING: TOKEN env var not set. Bot will not connect to Discord.")
         import threading
+
         threading.Event().wait()
     bot.run(TOKEN)
