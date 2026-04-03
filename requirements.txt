@@ -8,7 +8,6 @@ python-dotenv
 psutil
 aiohttp
 aiofiles
-aiohttp
 discord.py
 ffmpeg
 ffmpeg-python
