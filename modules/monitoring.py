@@ -147,13 +147,26 @@ async def load_stats_from_pastebin():
                 text = await r.text()
         data = json.loads(text)
         history = data.get("recent", [])
+        now = int(time.time())
         if history:
-            cutoff = int(time.time()) - HISTORY_SECONDS
+            cutoff = now - HISTORY_SECONDS
             CHECK_HISTORY.clear()
             for entry in history:
                 ts, up = int(entry[0]), bool(entry[1])
                 if ts > cutoff:
                     CHECK_HISTORY.append((ts, up))
+
+            last_ts = CHECK_HISTORY[-1][0] if CHECK_HISTORY else None
+            if last_ts is not None:
+                gap = now - last_ts
+                if gap > SAMPLE_INTERVAL:
+                    num_down = int(gap // SAMPLE_INTERVAL)
+                    for i in range(1, num_down + 1):
+                        sample_ts = last_ts + i * SAMPLE_INTERVAL
+                        if sample_ts < now and sample_ts > cutoff:
+                            CHECK_HISTORY.append((sample_ts, False))
+                    print(f"Injected {num_down} down sample(s) to cover {gap // 60:.0f}m offline gap.")
+
         saved_since = data.get("since")
         if saved_since and saved_since < START_TS:
             START_TS = saved_since
