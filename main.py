@@ -148,7 +148,7 @@ async def _send_result(ctx, msg, file_path: Path, media_type: str, title: str, s
     finally:
         file_path.unlink(missing_ok=True)
     total = time.time() - start
-    await msg.edit(content=_sm(100, f"✅  Done in {total:.1f}s"))
+    await msg.edit(content=_sm(100, f"<a:confetti:1489625600678166729>  Done in {total:.1f}s"))
     return True
 
 
