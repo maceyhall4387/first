@@ -10,6 +10,7 @@ from pathlib import Path
 
 try:
     import imageio_ffmpeg as _iio_ffmpeg
+
     _ffmpeg_exe = _iio_ffmpeg.get_ffmpeg_exe()
     _ffmpeg_dir = str(Path(_ffmpeg_exe).parent)
     os.environ["PATH"] = _ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
@@ -19,6 +20,7 @@ except Exception:
 
 try:
     from curl_cffi.requests import AsyncSession as CurlSession
+
     _CURL_CFFI_AVAILABLE = True
 except ImportError:
     _CURL_CFFI_AVAILABLE = False
@@ -66,7 +68,11 @@ YTDLP_COMMON = {
     "no_check_certificate": True,
     "socket_timeout": 15,
     "sleep_interval_requests": 0,
-    **({"ffmpeg_location": os.environ["IMAGEIO_FFMPEG_EXE"]} if "IMAGEIO_FFMPEG_EXE" in os.environ else {}),
+    **(
+        {"ffmpeg_location": os.environ["IMAGEIO_FFMPEG_EXE"]}
+        if "IMAGEIO_FFMPEG_EXE" in os.environ
+        else {}
+    ),
     "extractor_args": {
         "youtube": {
             "player_client": ["ios", "android", "android_vr", "mweb", "web_creator"],
@@ -134,31 +140,48 @@ def _sm(pct: int, *lines: str) -> str:
 
 def _platform(url: str) -> str:
     u = url.lower()
-    if "instagram.com" in u: return "Instagram"
-    if "twitter.com" in u or "x.com" in u: return "Twitter/X"
-    if "youtube.com" in u or "youtu.be" in u: return "YouTube"
-    if "tiktok.com" in u: return "TikTok"
-    if "reddit.com" in u: return "Reddit"
-    if "twitch.tv" in u: return "Twitch"
-    if "vimeo.com" in u: return "Vimeo"
-    if "facebook.com" in u or "fb.watch" in u: return "Facebook"
-    if "soundcloud.com" in u: return "SoundCloud"
-    if "bilibili.com" in u: return "Bilibili"
-    if "dailymotion.com" in u: return "Dailymotion"
+    if "instagram.com" in u:
+        return "Instagram"
+    if "twitter.com" in u or "x.com" in u:
+        return "Twitter/X"
+    if "youtube.com" in u or "youtu.be" in u:
+        return "YouTube"
+    if "tiktok.com" in u:
+        return "TikTok"
+    if "reddit.com" in u:
+        return "Reddit"
+    if "twitch.tv" in u:
+        return "Twitch"
+    if "vimeo.com" in u:
+        return "Vimeo"
+    if "facebook.com" in u or "fb.watch" in u:
+        return "Facebook"
+    if "soundcloud.com" in u:
+        return "SoundCloud"
+    if "bilibili.com" in u:
+        return "Bilibili"
+    if "dailymotion.com" in u:
+        return "Dailymotion"
     return "Media"
 
 
-async def _send_result(ctx, msg, file_path: Path, media_type: str, title: str, start: float) -> bool:
+async def _send_result(
+    ctx, msg, file_path: Path, media_type: str, title: str, start: float
+) -> bool:
     size_mb = file_path.stat().st_size / (1024 * 1024)
     if size_mb > 25:
-        await msg.edit(content=_sm(0, f"❌  File too large ({size_mb:.1f} MB — Discord limit is 25 MB)"))
+        await msg.edit(
+            content=_sm(
+                0, f"❌  File too large ({size_mb:.1f} MB — Discord limit is 25 MB)"
+            )
+        )
         return False
     await msg.edit(content=_sm(90, "📤  Uploading..."))
     title_line = f"\n**{title}**" if title else ""
     try:
         await ctx.send(
             f"{ctx.author.mention}, here is your {media_type}:{title_line}",
-            file=discord.File(str(file_path))
+            file=discord.File(str(file_path)),
         )
     except discord.errors.HTTPException as e:
         await msg.edit(content=_sm(0, f"❌  Upload failed: {e}"))
@@ -166,7 +189,9 @@ async def _send_result(ctx, msg, file_path: Path, media_type: str, title: str, s
     finally:
         file_path.unlink(missing_ok=True)
     total = time.time() - start
-    await msg.edit(content=_sm(100, f"<a:confetti:1489625600678166729>  Done in {total:.1f}s"))
+    await msg.edit(
+        content=_sm(100, f"<a:confetti:1489625600678166729>  Done in {total:.1f}s")
+    )
     return True
 
 
@@ -492,27 +517,36 @@ async def ytmp3(ctx, *, query: str):
             )
         except Exception as e:
             if _is_ytdlp_fatal(e):
-                await msg.edit(content=_sm(0,
-                    f"❌  yt-dlp: {_short_error(e)}",
-                    f"   · {time.time()-start:.1f}s"
-                ))
+                await msg.edit(
+                    content=_sm(
+                        0,
+                        f"❌  yt-dlp: {_short_error(e)}",
+                        f"   · {time.time() - start:.1f}s",
+                    )
+                )
                 return
             stage1_err = _short_error(e)
             _log(f"[ytmp3] Stage 1 failed: {e}")
 
         if info is None:
-            await msg.edit(content=_sm(35,
-                f"⚠  yt-dlp failed: {stage1_err}",
-                "↩  Trying Invidious fallback..."
-            ))
+            await msg.edit(
+                content=_sm(
+                    35,
+                    f"⚠  yt-dlp failed: {stage1_err}",
+                    "↩  Trying Invidious fallback...",
+                )
+            )
             try:
                 info = await _download_via_invidious(query, tmpdir, False)
             except Exception as e:
-                await msg.edit(content=_sm(0,
-                    f"⚠  yt-dlp: {stage1_err}",
-                    f"❌  Invidious: {_short_error(e)}",
-                    f"   · {time.time()-start:.1f}s"
-                ))
+                await msg.edit(
+                    content=_sm(
+                        0,
+                        f"⚠  yt-dlp: {stage1_err}",
+                        f"❌  Invidious: {_short_error(e)}",
+                        f"   · {time.time() - start:.1f}s",
+                    )
+                )
                 return
 
         elapsed_dl = time.time() - start
@@ -521,10 +555,11 @@ async def ytmp3(ctx, *, query: str):
         downloaded = tmpdir / f"{video_id}.{info.get('ext', 'm4a')}"
         out_path = tmpdir / f"{video_id}.mp3"
 
-        await msg.edit(content=_sm(65,
-            f"✅  Downloaded  · {elapsed_dl:.1f}s",
-            "🔄  Converting to MP3..."
-        ))
+        await msg.edit(
+            content=_sm(
+                65, f"✅  Downloaded  · {elapsed_dl:.1f}s", "🔄  Converting to MP3..."
+            )
+        )
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: run_ffmpeg_extract(downloaded, out_path, True)
         )
@@ -561,27 +596,36 @@ async def ytmp4(ctx, *, query: str):
             )
         except Exception as e:
             if _is_ytdlp_fatal(e):
-                await msg.edit(content=_sm(0,
-                    f"❌  yt-dlp: {_short_error(e)}",
-                    f"   · {time.time()-start:.1f}s"
-                ))
+                await msg.edit(
+                    content=_sm(
+                        0,
+                        f"❌  yt-dlp: {_short_error(e)}",
+                        f"   · {time.time() - start:.1f}s",
+                    )
+                )
                 return
             stage1_err = _short_error(e)
             _log(f"[ytmp4] Stage 1 failed: {e}")
 
         if info is None:
-            await msg.edit(content=_sm(35,
-                f"⚠  yt-dlp failed: {stage1_err}",
-                "↩  Trying Invidious fallback..."
-            ))
+            await msg.edit(
+                content=_sm(
+                    35,
+                    f"⚠  yt-dlp failed: {stage1_err}",
+                    "↩  Trying Invidious fallback...",
+                )
+            )
             try:
                 info = await _download_via_invidious(query, tmpdir, True)
             except Exception as e:
-                await msg.edit(content=_sm(0,
-                    f"⚠  yt-dlp: {stage1_err}",
-                    f"❌  Invidious: {_short_error(e)}",
-                    f"   · {time.time()-start:.1f}s"
-                ))
+                await msg.edit(
+                    content=_sm(
+                        0,
+                        f"⚠  yt-dlp: {stage1_err}",
+                        f"❌  Invidious: {_short_error(e)}",
+                        f"   · {time.time() - start:.1f}s",
+                    )
+                )
                 return
 
         elapsed_dl = time.time() - start
@@ -591,10 +635,11 @@ async def ytmp4(ctx, *, query: str):
         tmp_out = tmpdir / f"{video_id}_tmp.mp4"
         out_path = tmpdir / f"{video_id}.mp4"
 
-        await msg.edit(content=_sm(65,
-            f"✅  Downloaded  · {elapsed_dl:.1f}s",
-            "🔄  Remuxing to MP4..."
-        ))
+        await msg.edit(
+            content=_sm(
+                65, f"✅  Downloaded  · {elapsed_dl:.1f}s", "🔄  Remuxing to MP4..."
+            )
+        )
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: run_ffmpeg_extract(downloaded, tmp_out, False)
         )
@@ -722,7 +767,8 @@ async def _fetch_cobalt_instances() -> list[tuple[str, str]]:
                     raise Exception(f"registry HTTP {r.status}")
                 data = await r.json(content_type=None)
         usable = [
-            i for i in data
+            i
+            for i in data
             if i.get("online")
             and not i.get("info", {}).get("auth")
             and i.get("services", {}).get("youtube")
@@ -742,7 +788,9 @@ async def _fetch_cobalt_instances() -> list[tuple[str, str]]:
         if result:
             _COBALT_INSTANCE_CACHE = result
             _COBALT_CACHE_TS = now
-            _log(f"[cobalt] Registry returned {len(result)} usable instance(s): {[h for h,_ in result[:5]]}")
+            _log(
+                f"[cobalt] Registry returned {len(result)} usable instance(s): {[h for h, _ in result[:5]]}"
+            )
             return result
     except Exception as e:
         _log(f"[cobalt] Registry fetch failed ({e}), using fallback list")
@@ -797,8 +845,10 @@ async def _cobalt_youtube_download(
             else:
                 async with aiohttp.ClientSession() as tmp_sess:
                     async with tmp_sess.post(
-                        endpoint, json=body, headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=20)
+                        endpoint,
+                        json=body,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=20),
                     ) as resp:
                         api_status = resp.status
                         api_text = await resp.text()
@@ -868,13 +918,14 @@ async def _cobalt_youtube_download(
             else:
                 dl_headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                  "Chrome/131.0.0.0 Safari/537.36"
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
                 }
                 async with aiohttp.ClientSession() as tmp_sess:
                     async with tmp_sess.get(
-                        dl_url, headers=dl_headers,
-                        timeout=aiohttp.ClientTimeout(total=300)
+                        dl_url,
+                        headers=dl_headers,
+                        timeout=aiohttp.ClientTimeout(total=300),
                     ) as dl_resp:
                         if dl_resp.status != 200:
                             reason = f"download HTTP {dl_resp.status}"
@@ -905,9 +956,12 @@ async def _cobalt_youtube_download(
     raise Exception(f"All Cobalt instances failed — {summary}")
 
 
-async def _loaderto_download(url: str, out_dir: Path, audio_only: bool) -> tuple[Path, str]:
+async def _loaderto_download(
+    url: str, out_dir: Path, audio_only: bool
+) -> tuple[Path, str]:
     """Download via loader.to. Returns (file_path, title) or raises."""
     import re as _re
+
     hdrs = {"Accept": "application/json", "Referer": "https://loader.to/"}
     formats = ["mp3"] if audio_only else ["1080", "720", "480"]
     ext = "mp3" if audio_only else "mp4"
@@ -918,7 +972,8 @@ async def _loaderto_download(url: str, out_dir: Path, audio_only: bool) -> tuple
             try:
                 r = await cs.get(
                     f"https://loader.to/ajax/download.php?format={fmt}&url={url}",
-                    headers=hdrs, timeout=15
+                    headers=hdrs,
+                    timeout=15,
                 )
                 d = r.json()
                 if d.get("success") and d.get("id"):
@@ -938,7 +993,8 @@ async def _loaderto_download(url: str, out_dir: Path, audio_only: bool) -> tuple
             try:
                 r = await cs.get(
                     f"https://loader.to/ajax/progress.php?id={job_id}",
-                    headers=hdrs, timeout=15
+                    headers=hdrs,
+                    timeout=15,
                 )
                 d = r.json()
                 if d.get("success") == 1 and d.get("download_url"):
@@ -953,14 +1009,18 @@ async def _loaderto_download(url: str, out_dir: Path, audio_only: bool) -> tuple
         out_path = out_dir / f"loaderto_{job_id}.{ext}"
         title = "Unknown"
 
-        r_dl = await cs.get(dl_url, headers={"Referer": "https://loader.to/"}, timeout=300)
+        r_dl = await cs.get(
+            dl_url, headers={"Referer": "https://loader.to/"}, timeout=300
+        )
         if r_dl.status_code != 200:
             raise RuntimeError(f"loader.to: download HTTP {r_dl.status_code}")
 
         cd = r_dl.headers.get("content-disposition", "")
         m = _re.search(r'filename="(.+?)"', cd)
         if m:
-            title = _re.sub(r'\.(mp3|mp4|webm|m4a)$', '', m.group(1), flags=_re.IGNORECASE).strip()
+            title = _re.sub(
+                r"\.(mp3|mp4|webm|m4a)$", "", m.group(1), flags=_re.IGNORECASE
+            ).strip()
 
         with open(out_path, "wb") as f:
             f.write(r_dl.content)
@@ -984,8 +1044,16 @@ async def mp4(ctx, *, url: str):
             msg = await ctx.send(_sm(5, f"⬇  Downloading {plat} Video  ·  cobalt"))
             try:
                 async with aiohttp.ClientSession() as session:
-                    out_path, title = await _cobalt_youtube_download(url, tmpdir, False, session)
-                await msg.edit(content=_sm(65, f"✅  Downloaded via cobalt  · {time.time() - start:.1f}s", "📤  Uploading..."))
+                    out_path, title = await _cobalt_youtube_download(
+                        url, tmpdir, False, session
+                    )
+                await msg.edit(
+                    content=_sm(
+                        65,
+                        f"✅  Downloaded via cobalt  · {time.time() - start:.1f}s",
+                        "📤  Uploading...",
+                    )
+                )
                 await _send_result(ctx, msg, out_path, "MP4", title, start)
                 return
             except Exception as cobalt_err:
@@ -993,12 +1061,20 @@ async def mp4(ctx, *, url: str):
                 await msg.edit(content=_sm(10, "⚠  Cobalt failed, trying loader.to..."))
             try:
                 out_path, title = await _loaderto_download(url, tmpdir, False)
-                await msg.edit(content=_sm(65, f"✅  Downloaded via loader.to  · {time.time() - start:.1f}s", "📤  Uploading..."))
+                await msg.edit(
+                    content=_sm(
+                        65,
+                        f"✅  Downloaded via loader.to  · {time.time() - start:.1f}s",
+                        "📤  Uploading...",
+                    )
+                )
                 await _send_result(ctx, msg, out_path, "MP4", title, start)
                 return
             except Exception as lt_err:
                 _log(f"[mp4] loader.to failed ({lt_err}), falling back to yt-dlp")
-                await msg.edit(content=_sm(15, "⚠  loader.to failed, retrying with yt-dlp..."))
+                await msg.edit(
+                    content=_sm(15, "⚠  loader.to failed, retrying with yt-dlp...")
+                )
         else:
             msg = await ctx.send(_sm(5, f"⬇  Downloading {plat} Video  ·  yt-dlp"))
 
@@ -1017,10 +1093,11 @@ async def mp4(ctx, *, url: str):
             await msg.edit(content=_sm(0, "❌  Download failed: file not found"))
             return
 
-        await msg.edit(content=_sm(65,
-            f"✅  Downloaded  · {elapsed_dl:.1f}s",
-            "🔄  Remuxing to MP4..."
-        ))
+        await msg.edit(
+            content=_sm(
+                65, f"✅  Downloaded  · {elapsed_dl:.1f}s", "🔄  Remuxing to MP4..."
+            )
+        )
         tmp_out = tmpdir / f"{video_id}_tmp.mp4"
         out_path = tmpdir / f"{video_id}.mp4"
         await asyncio.get_event_loop().run_in_executor(
@@ -1056,8 +1133,16 @@ async def mp3(ctx, *, url: str):
             msg = await ctx.send(_sm(5, f"⬇  Downloading {plat} Audio  ·  cobalt"))
             try:
                 async with aiohttp.ClientSession() as session:
-                    out_path, title = await _cobalt_youtube_download(url, tmpdir, True, session)
-                await msg.edit(content=_sm(65, f"✅  Downloaded via cobalt  · {time.time() - start:.1f}s", "📤  Uploading..."))
+                    out_path, title = await _cobalt_youtube_download(
+                        url, tmpdir, True, session
+                    )
+                await msg.edit(
+                    content=_sm(
+                        65,
+                        f"✅  Downloaded via cobalt  · {time.time() - start:.1f}s",
+                        "📤  Uploading...",
+                    )
+                )
                 await _send_result(ctx, msg, out_path, "MP3", title, start)
                 return
             except Exception as cobalt_err:
@@ -1065,12 +1150,20 @@ async def mp3(ctx, *, url: str):
                 await msg.edit(content=_sm(10, "⚠  Cobalt failed, trying loader.to..."))
             try:
                 out_path, title = await _loaderto_download(url, tmpdir, True)
-                await msg.edit(content=_sm(65, f"✅  Downloaded via loader.to  · {time.time() - start:.1f}s", "📤  Uploading..."))
+                await msg.edit(
+                    content=_sm(
+                        65,
+                        f"✅  Downloaded via loader.to  · {time.time() - start:.1f}s",
+                        "📤  Uploading...",
+                    )
+                )
                 await _send_result(ctx, msg, out_path, "MP3", title, start)
                 return
             except Exception as lt_err:
                 _log(f"[mp3] loader.to failed ({lt_err}), falling back to yt-dlp")
-                await msg.edit(content=_sm(15, "⚠  loader.to failed, retrying with yt-dlp..."))
+                await msg.edit(
+                    content=_sm(15, "⚠  loader.to failed, retrying with yt-dlp...")
+                )
         else:
             msg = await ctx.send(_sm(5, f"⬇  Downloading {plat} Audio  ·  yt-dlp"))
 
@@ -1089,10 +1182,11 @@ async def mp3(ctx, *, url: str):
             await msg.edit(content=_sm(0, "❌  Download failed: file not found"))
             return
 
-        await msg.edit(content=_sm(65,
-            f"✅  Downloaded  · {elapsed_dl:.1f}s",
-            "🔄  Converting to MP3..."
-        ))
+        await msg.edit(
+            content=_sm(
+                65, f"✅  Downloaded  · {elapsed_dl:.1f}s", "🔄  Converting to MP3..."
+            )
+        )
         out_path = tmpdir / f"{video_id}.mp3"
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: run_ffmpeg_extract(src, out_path, True)
